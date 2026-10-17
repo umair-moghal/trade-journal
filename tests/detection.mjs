@@ -1,0 +1,31 @@
+import fs from 'node:fs';import ts from 'typescript';import assert from 'node:assert/strict';
+const url=p=>'data:text/javascript;base64,'+Buffer.from(ts.transpileModule(fs.readFileSync(p,'utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText).toString('base64');
+const {analyzeText,matchPosition,mergeDetection,priceNumber,inferDirection}=await import(url('lib/screenshot-analysis.ts'));const {metrics,defaults,blank,validate}=await import(url('lib/journal.ts'));
+assert.equal(priceNumber('4,209.118'),4209.118);assert.equal(priceNumber(''),null);assert.equal(inferDirection('4200','4190','4220'),'BUY');assert.equal(inferDirection('4200','4210','4180'),'SELL');
+const t=analyzeText('XAUUSD 5m Side: BUY\nEntry: 4,200.50\nStop Loss: 4190.50\nTake Profit: 4220.50\nActual Entry: 4201.50\nActual Exit: 4210.50\nNet P&L: $25.00\n2026-10-09 Time: 10:15');assert.equal(t.values.entry,'4200.5');assert.equal(t.values.actualEntry,'4201.5');assert.equal(t.values.pnl,'25');assert.equal(t.values.exit,'4210.5');assert.equal(t.confirmed,true);assert.equal(t.values.direction,'BUY');assert.equal(t.values.time,'10:15');
+assert.equal(analyzeText('Current price 4192.580 Open P&L: $20').confirmed,false);assert.equal(analyzeText('Entry: 0').values.entry,undefined);assert.equal(analyzeText('Lot size: 100').values.lot,undefined);
+const labels=[{x:1713,y:229,width:82,height:21,kind:'red',price:4209.118,score:79},{x:1713,y:322,width:82,height:21,kind:'gray',price:4202.541,score:90},{x:1713,y:462,width:82,height:39,kind:'red',price:4192.58,score:42},{x:1713,y:501,width:82,height:21,kind:'gray',price:4192.052,score:76}];const result=matchPosition(labels,[{x:1061,y:239,width:383,height:93,kind:'risk'}]);assert.equal(result.values.direction,'SELL');assert.equal(result.values.entry,'4202.541');assert.equal(result.values.tp,'4192.052');assert.equal(result.confidence.tp,'medium');assert.equal(result.values.exit,undefined);
+const buyLabels=labels.filter(l=>l.height===21).map(l=>({...l,y:800-l.y-l.height,price:8400-l.price}));const buy=matchPosition(buyLabels,[{x:1061,y:468,width:383,height:93,kind:'risk'}]);assert.equal(buy.values.direction,'BUY');assert.equal(buy.values.sl,'4190.882');
+const trade={...blank(),entry:'4200',sl:'4190',tp:'4220',actualEntry:'4201',exit:'4210',lot:'.03',direction:'BUY',confirmed:true,screenshotAnalysis:true};assert.equal(metrics(trade,defaults).grossPnl,27);assert.equal(metrics(trade,{...defaults,goldContractSize:10}).grossPnl,2.7);assert.equal(metrics(trade,defaults).pnl,27);assert.throws(()=>validate({...trade,lot:''}));validate(trade);
+console.log('PASS: thousands separators, explicit fills, no zero placeholders, no lot extraction, buy/sell geometry, confidence, live-price exclusion, lot and configurable gross P&L');
+const partial=matchPosition(labels.slice(0,2),[{x:1061,y:239,width:383,height:93,kind:'risk'}]);assert.equal(partial.values.entry,'4202.541');assert.equal(partial.values.sl,'4209.118');assert.equal(partial.values.direction,'SELL');assert.equal(partial.values.tp,undefined);console.log('PASS: unreadable target does not discard entry, stop or direction');
+
+const {extractChartTime,localToday,screenshotFormValues}=await import(url('lib/screenshot-analysis.ts'));
+assert.equal(extractChartTime('11:11:22 AM UTC+5').value,'11:11');
+assert.equal(extractChartTime('11:11:22 PM UTC+5').value,'23:11');
+assert.equal(extractChartTime('12:15 AM UTC-04:30').value,'09:45');
+assert.equal(extractChartTime('23:30:00 UTC+0').value,'04:30');
+assert.equal(extractChartTime('Trade Time: 09:45').value,'09:45');
+assert.match(extractChartTime('Trade Time: 09:45').evidence,/unknown/);
+assert.equal(extractChartTime('09:00 AM 10:00 AM 03:38'),null);
+assert.equal(analyzeText('Date: 2020-01-01').values.date,undefined);
+assert.equal(localToday(new Date(2026,9,12,1)), '2026-10-12');
+assert.equal(analyzeText('1m 3m 5m Gold Spot / U.S. Dollar · 5 · FOREX.com').values.timeframe,'5m');
+assert.equal(analyzeText('Stop: 10.23 (0.2%) Target: 25.10').values.sl,undefined);
+assert.equal(analyzeText('Closed P&L: 25.10 Qty: 100 Risk/Reward Ratio: 2.45').confirmed,false);
+const executed=analyzeText('XAUUSD Closed trade Side: SELL\nOpen Price: 4209.26\nClose Price: 4199.26\nNet P&L: $29.5');
+assert.equal(executed.values.actualEntry,'4209.26');assert.equal(executed.values.exit,'4199.26');assert.equal(executed.values.pnl,'29.5');assert.equal(executed.confirmed,true);
+const mapped={...blank(),...screenshotFormValues(executed),lot:'.03',confirmed:executed.confirmed};assert.equal(metrics(mapped,defaults).result,'WIN');assert.equal(metrics(mapped,defaults).points,100);
+console.log('PASS: screenshot clock/PKT conversion, no OCR date, timeframe heading precedence, execution panel mapping and result calculations');
+
+assert.equal(mergeDetection(analyzeText('Target: 25'),executed).confirmed,true);
